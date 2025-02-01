@@ -1,19 +1,49 @@
-# Copyright Broadcom, Inc. All Rights Reserved.
-# SPDX-License-Identifier: APACHE-2.0
-
 services:
-  data-lake:
-    image: docker.io/bitnami/minio:2024
-    container_name: sales-datalake
-    ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - 'minio_data:/bitnami/minio/data'
+  postgresql:
+    image: postgres:latest
+    container_name: airflow-db
     environment:
-      - MINIO_ROOT_USER=minio-root-user
-      - MINIO_ROOT_PASSWORD=minio-root-password
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+      timeout: 5s
+    networks:
+      - airflow-network
 
+  airflow:
+    build: .
+    container_name: airflow
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgresql:5432/airflow
+      - AIRFLOW__WEBSERVER__DEFAULT_USER_USERNAME=admin
+      - AIRFLOW__WEBSERVER__DEFAULT_USER_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data/source:/sales-processing/data/source
+    command: >
+      bash -c "
+      airflow db upgrade &&
+      airflow users create --username admin --password admin --role Admin --email admin@example.com --firstname Admin --lastname User &&
+      airflow webserver & airflow scheduler"
+    networks:
+      - airflow-network
+
+    
   spark-master:
     image: bitnami/spark:latest
     container_name: spark-master
@@ -21,7 +51,9 @@ services:
       SPARK_MODE: master
     ports:
       - "7077:7077"
-      - "8080:8080"
+      - "8081:8080"
+    networks:
+      - airflow-network
 
   spark-worker:
     image: bitnami/spark:latest
@@ -31,63 +63,27 @@ services:
       SPARK_MASTER_URL: spark://spark-master:7077
     depends_on:
       - spark-master
+    networks:
+      - airflow-network
 
-  postgresql:
-    image: docker.io/bitnami/postgresql:latest
-    volumes:
-      - 'postgresql_data:/bitnami/postgresql'
-    environment:
-      - POSTGRESQL_DATABASE=bitnami_airflow
-      - POSTGRESQL_USERNAME=bn_airflow
-      - POSTGRESQL_PASSWORD=bitnami1
-      # ALLOW_EMPTY_PASSWORD is recommended only for development.
-      - ALLOW_EMPTY_PASSWORD=yes
-
-  redis:
-    image: docker.io/bitnami/redis:latest
-    volumes:
-      - 'redis_data:/bitnami'
-    environment:
-      # ALLOW_EMPTY_PASSWORD is recommended only for development.
-      - ALLOW_EMPTY_PASSWORD=yes
-
-  airflow-scheduler:
-    image: docker.io/bitnami/airflow:2
-    environment:
-      - AIRFLOW_COMPONENT_TYPE=scheduler
-      - AIRFLOW_DATABASE_NAME=bitnami_airflow
-      - AIRFLOW_DATABASE_USERNAME=bn_airflow
-      - AIRFLOW_DATABASE_PASSWORD=bitnami1
-      - AIRFLOW_EXECUTOR=CeleryExecutor
-      - AIRFLOW_WEBSERVER_HOST=airflow
-      - AIRFLOW_LOAD_EXAMPLES=no
-    volumes:
-      - ./dags:/opt/bitnami/airflow/dags
-
-  airflow-worker:
-    image: docker.io/bitnami/airflow:2
-    environment:
-      - AIRFLOW_COMPONENT_TYPE=worker
-      - AIRFLOW_DATABASE_NAME=bitnami_airflow
-      - AIRFLOW_DATABASE_USERNAME=bn_airflow
-      - AIRFLOW_DATABASE_PASSWORD=bitnami1
-      - AIRFLOW_EXECUTOR=CeleryExecutor
-      - AIRFLOW_WEBSERVER_HOST=airflow
-
-  #User: user / pass: bitnami
-  airflow:
-    image: docker.io/bitnami/airflow:2
-    environment:
-      - AIRFLOW_DATABASE_NAME=bitnami_airflow
-      - AIRFLOW_DATABASE_USERNAME=bn_airflow
-      - AIRFLOW_DATABASE_PASSWORD=bitnami1
-      - AIRFLOW_EXECUTOR=CeleryExecutor
+  data-lake:
+    image: bitnami/minio:latest
+    container_name: minio
     ports:
-      - '8081:8080'
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/bitnami/minio/data
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=minio123
+    networks:
+      - airflow-network
+
 volumes:
-  postgresql_data:
-    driver: local
-  redis_data:
-    driver: local
+  postgres_data:
   minio_data:
-    driver: local
+
+networks:
+  airflow-network:
+    driver: bridge

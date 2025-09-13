@@ -1,38 +1,30 @@
-from datetime import datetime
 from airflow import DAG
-from airflow.operators.python import PythonOperator
-from pyspark.sql import SparkSession
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.utils.dates import days_ago
 
-def run_spark_job():
-    spark = SparkSession.builder.appName("test-spark").master("spark://spark-master:7077").getOrCreate()
-
-    df = spark.createDataFrame([
-        (1, 144.5, 5.9, 33, 'M'),
-        (2, 167.2, 5.4, 45, 'M'),
-        (3, 124.1, 5.2, 23, 'F'),
-        (4, 144.5, 5.9, 33, 'M'),
-        (5, 133.2, 5.7, 54, 'F'),
-        (3, 124.1, 5.2, 23, 'F'),
-        (5, 129.2, 5.3, 42, 'M')
-    ], ['id', 'weight', 'height', 'age', 'gender'])
-
-    df = df.dropDuplicates()
-
-    df.show()
-
-    spark.stop()
+default_args = {
+    "owner": "airflow",
+    "start_date": days_ago(1)
+}
 
 with DAG(
     dag_id="test_spark",
+    default_args=default_args,
+    description="Simple Spark DataFrame test",
     schedule_interval=None,
-    start_date=datetime(2025, 1, 31),
     catchup=False,
-    tags=["test"]
+    tags=["spark", "test"],
 ) as dag:
-    
-    spark_task = PythonOperator(
-        task_id="run_spark_job",
-        python_callable=run_spark_job
+    spark_test = SparkSubmitOperator(
+        task_id="spark_dataframe_test",
+        application="/opt/airflow/dags/spark_job.py",
+        conn_id="spark_local",
+        conf={
+            "spark.app.name": "airflow-spark-test",
+            "spark.executor.memory": "512m",
+            "spark.driver.memory": "512m",
+            "spark.pyspark.driver.python": "/usr/bin/python3",
+            "spark.pyspark.python": "/usr/bin/python3"
+        },
+        verbose=True
     )
-
-    spark_task
